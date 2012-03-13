@@ -594,7 +594,8 @@ class SQLAlchemy(object):
     """
 
     def __init__(self, app=None, use_native_unicode=True,
-                 session_extensions=None, session_options=None):
+                 session_extensions=None, session_options=None, 
+                 default_engine=None, default_echo=False):
         self.use_native_unicode = use_native_unicode
         self.session_extensions = to_list(session_extensions, []) + \
                                   [_SignallingSessionExtension()]
@@ -609,6 +610,8 @@ class SQLAlchemy(object):
         self.session = self.create_scoped_session(session_options)
         self.Model = self.make_declarative_base()
         self._engine_lock = Lock()
+        self.default_engine = default_engine
+        self.default_echo = default_echo
 
         if app is not None:
             self.app = app
@@ -771,6 +774,7 @@ class SQLAlchemy(object):
         for table in self.Model.metadata.tables.itervalues():
             if table.info.get('bind_key') == bind:
                 result.append(table)
+            
         return result
 
     def get_binds(self, app=None):
@@ -788,19 +792,39 @@ class SQLAlchemy(object):
         return retval
 
     def _execute_for_all_tables(self, app, bind, operation):
-        app = self.get_app(app)
+
+        try:
+            app = self.get_app(app)
+        except:
+            app = None
 
         if bind == '__all__':
-            binds = [None] + list(app.config.get('SQLALCHEMY_BINDS') or ())
+            if app:
+                binds = [None] + list(app.config.get('SQLALCHEMY_BINDS') or ())
+            else:
+                binds = [None]
         elif isinstance(bind, basestring):
             binds = [bind]
         else:
             binds = bind
 
+
         for bind in binds:
+            if not app and self.default_engine:
+                options = { 'echo': False }
+                if self.default_echo:
+                    options['echo'] = True
+
+                engine = sqlalchemy.create_engine(
+                    self.default_engine,
+                    **options
+                )
+            else:
+                engine = self.get_engine(app, bind)
+
             tables = self.get_tables_for_bind(bind)
             op = getattr(self.Model.metadata, operation)
-            op(bind=self.get_engine(app, bind), tables=tables)
+            op(bind=engine, tables=tables)
 
     def create_all(self, bind='__all__', app=None):
         """Creates all tables.
